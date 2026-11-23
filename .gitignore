@@ -1,7 +1,3 @@
 __pycache__/
 *.py[cod]
 
-# Local datasets; keep them out of the public repository.
-0_baris_dibuang_asing.csv
-master_dataset_indobert_final.csv
-master_dataset_labeled.parquet
