@@ -232,8 +232,18 @@ with tab4:
     p_top = hasil("4_tabel_topik_negatif_semua.csv")
     if p_top:
         top = pd.read_csv(p_top)
-        if top["nama_topik"].astype(str).str.contains("beri nama").any():
-            st.warning("Nama topik belum diisi (masih '(beri nama)'). Isi kolom nama_topik di CSV dulu.")
+        if top["nama_topik"].astype(str).str.contains("beri nama", case=False, na=False).any():
+            st.warning("Sebagian nama topik belum dilengkapi di CSV.")
+        st.caption("Topik LDA 0, 2, dan 6 dikelompokkan dalam tema kritik umum terhadap aparat dan negara.")
+        top = top.rename(
+            columns={
+                "No": "Topik LDA",
+                "nama_topik": "Tema",
+                "kata_kunci_utama": "Kata Kunci Utama",
+                "jumlah_dokumen": "Jumlah Dokumen",
+                "persen_dokumen": "Persentase Dokumen (%)",
+            }
+        )
         st.dataframe(top, width="stretch", hide_index=True)
     else:
         st.info("Taruh 4_tabel_topik_negatif_semua.csv (dari Anggota 2) di folder hasil/.")
