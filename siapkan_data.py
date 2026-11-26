@@ -3,44 +3,79 @@ Menyiapkan master_dataset_labeled.parquet untuk dashboard.
 
 Input (taruh satu folder dengan file ini):
   - master_dataset_indobert_final.csv   (dari Anggota 1)
-  - 0_baris_dibuang_asing.csv           (dari Anggota 2, folder hasil_analisis_anggota2_pyspark)
 
 Aturan sama persis dengan notebook Anggota 2:
-  1. Buang 3.512 baris tweet asing (Turki)
-  2. Buang teks bersih kosong
-  3. Pisahkan X menjadi X_Reply (teks diawali "@") dan X_Main
-  4. Label sentimen = kolom indobert_sentiment
-Hasil yang diharapkan: 158.185 baris (X_Main 79.613, X_Reply 43.978, Threads 34.594).
+  1. Hapus @mention dan link dari full_text_raw untuk mengukur teks
+  2. Buang baris dengan minimal 2 huruf [ıİşŞğĞ] yang proporsinya minimal 2%
+  3. Buang teks bersih kosong
+  4. Pisahkan X menjadi X_Reply (teks diawali "@") dan X_Main
+  5. Label sentimen = kolom indobert_sentiment
 """
 import os
 import pandas as pd
 
-df = pd.read_csv("master_dataset_indobert_final.csv", dtype={"doc_id": str})
-print("Baris awal:", len(df))
 
-if os.path.exists("0_baris_dibuang_asing.csv"):
-    asing = pd.read_csv("0_baris_dibuang_asing.csv", dtype={"doc_id": str})
-    df = df[~df["doc_id"].isin(asing["doc_id"])]
-else:
-    print("PERINGATAN: 0_baris_dibuang_asing.csv tidak ditemukan, baris asing tidak dibuang.")
+def report_rows(step, before, after):
+    print(f"{step}: {before:,} -> {after:,} baris (dibuang {before - after:,})")
 
-df = df[df["full_text_clean"].notna() & (df["full_text_clean"].astype(str).str.strip() != "")]
+
+def is_turkish_noise(full_text_raw):
+    text = (
+        full_text_raw.astype(object)
+        .fillna("")
+        .str.replace(r"(?a)(@\w+|https?://\S+)", "", regex=True)
+    )
+    n_tr = text.str.count(r"[ıİşŞğĞ]")
+    text_length = text.str.len().clip(lower=1)
+    return n_tr.ge(2) & n_tr.div(text_length).ge(0.02)
+
+
+df = pd.read_csv(
+    "master_dataset_indobert_final.csv",
+    dtype={"doc_id": str},
+    keep_default_na=False,
+)
+print(f"CSV utama dimuat: {len(df):,} baris")
+print(f"doc_id duplikat: {df['doc_id'].duplicated().sum():,}")
+clean_text = df["full_text_clean"].astype("string").fillna("").str.strip()
+print(f"full_text_clean literal 'nan'/'null': {clean_text.str.lower().isin(['nan', 'null']).sum():,}")
+print(f"kata_kunci kosong: {df['kata_kunci'].astype('string').fillna('').str.strip().eq('').sum():,}")
+print(f"created_at tidak valid: {pd.to_datetime(df['created_at'], errors='coerce').isna().sum():,}")
+
+is_asing = is_turkish_noise(df["full_text_raw"])
+print("Baris dibuang berdasarkan aturan teks, per sumber:")
+print(df.loc[is_asing, "sumber_data"].value_counts().to_string())
+before = len(df)
+df = df.loc[~is_asing].copy()
+report_rows("Hapus teks yang memenuhi aturan asing", before, len(df))
+
+before = len(df)
+text = df["full_text_clean"].astype("string").fillna("").str.strip()
+has_text = text.ne("")
+df = df.loc[has_text].copy()
+report_rows("Hapus full_text_clean kosong", before, len(df))
 
 # Pisahkan X_Main / X_Reply
 is_x = df["sumber_data"] == "X"
 is_reply = is_x & df["full_text_raw"].astype(str).str.startswith("@")
+before = len(df)
 df.loc[is_reply, "sumber_data"] = "X_Reply"
 df.loc[is_x & ~is_reply, "sumber_data"] = "X_Main"
+report_rows("Klasifikasi sumber X (tidak menghapus baris)", before, len(df))
 
+before = len(df)
 df["sentiment"] = df["indobert_sentiment"]
+report_rows("Salin indobert_sentiment (tidak menghapus baris)", before, len(df))
 
 kolom = ["doc_id", "sumber_data", "kata_kunci", "created_at",
          "full_text_clean", "sentiment", "indobert_confidence"]
+before = len(df)
 df = df[[k for k in kolom if k in df.columns]].copy()
+report_rows("Pilih kolom output (tidak menghapus baris)", before, len(df))
 for k in ["sumber_data", "kata_kunci", "sentiment"]:
     df[k] = df[k].astype("category")
 
-print("Baris akhir:", len(df))
+print(f"Baris akhir: {len(df):,}")
 print(df["sumber_data"].value_counts())
 print(df["sentiment"].value_counts())
 

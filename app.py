@@ -19,6 +19,10 @@ ORDER = ["Negatif", "Netral", "Positif"]
 COLOR_MAP = {"Negatif": "#FF6B6B", "Netral": "#FFD166", "Positif": "#06D6A0"}
 
 
+def report_rows(step, before, after):
+    print(f"[diagnostik baris] {step}: {before:,} -> {after:,} (dibuang {before - after:,})")
+
+
 def hasil(*names):
     """Path file pertama yang ada di folder hasil/, atau None."""
     for n in names:
@@ -31,8 +35,12 @@ def hasil(*names):
 @st.cache_data
 def load_data():
     df = pd.read_parquet(DATA_FILE)
+    print(f"[diagnostik baris] Baca parquet: {len(df):,} baris")
+    before = len(df)
     df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")
-    df = df.dropna(subset=["created_at"])
+    df = df.loc[df["created_at"].notna()].copy()
+    report_rows("Hapus created_at tidak valid", before, len(df))
+    before = len(df)
     for c in ["sumber_data", "kata_kunci", "sentiment"]:
         df[c] = df[c].astype(str)
     df["sentiment"] = df["sentiment"].str.strip().str.capitalize()
@@ -40,6 +48,19 @@ def load_data():
     low = df["kata_kunci"].str.lower()
     for kw in KEYWORDS:
         df[f"kw_{kw}"] = low.str.contains(kw, regex=False)
+    report_rows("Normalisasi kolom dan buat fitur", before, len(df))
+    clean_text = df["full_text_clean"].astype("string").fillna("").str.strip()
+    print(
+        "[diagnostik baris] full_text_clean kosong/literal 'nan'/'null': "
+        f"{clean_text.eq('').sum():,}/{clean_text.str.lower().isin(['nan', 'null']).sum():,}"
+    )
+    no_keyword_match = ~df[[f"kw_{kw}" for kw in KEYWORDS]].any(axis=1)
+    print(f"[diagnostik baris] Kata kunci kosong: {df['kata_kunci'].str.strip().eq('').sum():,}")
+    print(f"[diagnostik baris] Tidak cocok dengan kata kunci dashboard: {no_keyword_match.sum():,}")
+    if "doc_id" in df:
+        print(f"[diagnostik baris] doc_id duplikat di parquet: {df['doc_id'].duplicated().sum():,}")
+    print(f"[diagnostik baris] Sumber: {df['sumber_data'].value_counts().to_dict()}")
+    print(f"[diagnostik baris] Sentimen: {df['sentiment'].value_counts().to_dict()}")
     return df
 
 
@@ -80,13 +101,25 @@ mask_kw = pd.Series(False, index=df.index)
 for k in kw_opt:
     mask_kw |= df[f"kw_{k}"]
 
-df_f = df[
-    (df["created_at"].dt.date >= tgl_a)
-    & (df["created_at"].dt.date <= tgl_b)
-    & (df["sumber_data"].isin(src_opt))
-    & df["sentiment"].isin(sent_opt)
-    & mask_kw
+df_f = df
+before = len(df_f)
+df_f = df_f.loc[
+    (df_f["created_at"].dt.date >= tgl_a)
+    & (df_f["created_at"].dt.date <= tgl_b)
 ]
+report_rows("Filter rentang tanggal", before, len(df_f))
+
+before = len(df_f)
+df_f = df_f.loc[df_f["sumber_data"].isin(src_opt)]
+report_rows("Filter sumber data", before, len(df_f))
+
+before = len(df_f)
+df_f = df_f.loc[df_f["sentiment"].isin(sent_opt)]
+report_rows("Filter sentimen", before, len(df_f))
+
+before = len(df_f)
+df_f = df_f.loc[mask_kw]
+report_rows("Filter kata kunci", before, len(df_f))
 
 if df_f.empty:
     st.warning("Tidak ada data yang cocok dengan filter. Longgarkan filter di sidebar.")
