@@ -43,11 +43,12 @@ print(f"kata_kunci kosong: {df['kata_kunci'].astype('string').fillna('').str.str
 print(f"created_at tidak valid: {pd.to_datetime(df['created_at'], errors='coerce').isna().sum():,}")
 
 is_asing = is_turkish_noise(df["full_text_raw"])
-print("Baris dibuang berdasarkan aturan teks, per sumber:")
+print(f"Baris dibuang berdasarkan aturan teks: {int(is_asing.sum()):,}")
+print("Dibuang per sumber:")
 print(df.loc[is_asing, "sumber_data"].value_counts().to_string())
 before = len(df)
 df = df.loc[~is_asing].copy()
-report_rows("Hapus teks yang memenuhi aturan asing", before, len(df))
+report_rows("Terapkan aturan teks asing", before, len(df))
 
 before = len(df)
 text = df["full_text_clean"].astype("string").fillna("").str.strip()
@@ -75,9 +76,21 @@ report_rows("Pilih kolom output (tidak menghapus baris)", before, len(df))
 for k in ["sumber_data", "kata_kunci", "sentiment"]:
     df[k] = df[k].astype("category")
 
-print(f"Baris akhir: {len(df):,}")
-print(df["sumber_data"].value_counts())
-print(df["sentiment"].value_counts())
+print(f"Total akhir: {len(df):,}")
+print("Total per sumber:")
+print(
+    df["sumber_data"]
+    .value_counts()
+    .reindex(["X_Main", "X_Reply", "Threads"], fill_value=0)
+    .to_string()
+)
+print("Total per sentimen:")
+print(
+    df["sentiment"]
+    .value_counts()
+    .reindex(["Negatif", "Netral", "Positif"], fill_value=0)
+    .to_string()
+)
 
 df.to_parquet("master_dataset_labeled.parquet", index=False, compression="zstd")
 print("Ukuran file: %.1f MB" % (os.path.getsize("master_dataset_labeled.parquet") / 1e6))

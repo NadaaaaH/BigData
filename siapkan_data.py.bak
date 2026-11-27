@@ -3,13 +3,13 @@ Menyiapkan master_dataset_labeled.parquet untuk dashboard.
 
 Input (taruh satu folder dengan file ini):
   - master_dataset_indobert_final.csv   (dari Anggota 1)
-  - 0_baris_dibuang_asing.csv           (dari Anggota 2, folder hasil_analisis_anggota2_pyspark)
 
 Aturan sama persis dengan notebook Anggota 2:
-  1. Buang baris dengan doc_id yang tercantum di 0_baris_dibuang_asing.csv
-  2. Buang teks bersih kosong
-  3. Pisahkan X menjadi X_Reply (teks diawali "@") dan X_Main
-  4. Label sentimen = kolom indobert_sentiment
+  1. Hapus @mention dan link dari full_text_raw untuk mengukur teks
+  2. Buang baris dengan minimal 2 huruf [ıİşŞğĞ] yang proporsinya minimal 2%
+  3. Buang teks bersih kosong
+  4. Pisahkan X menjadi X_Reply (teks diawali "@") dan X_Main
+  5. Label sentimen = kolom indobert_sentiment
 """
 import os
 import pandas as pd
@@ -17,6 +17,17 @@ import pandas as pd
 
 def report_rows(step, before, after):
     print(f"{step}: {before:,} -> {after:,} baris (dibuang {before - after:,})")
+
+
+def is_turkish_noise(full_text_raw):
+    text = (
+        full_text_raw.astype(object)
+        .fillna("")
+        .str.replace(r"(?a)(@\w+|https?://\S+)", "", regex=True)
+    )
+    n_tr = text.str.count(r"[ıİşŞğĞ]")
+    text_length = text.str.len().clip(lower=1)
+    return n_tr.ge(2) & n_tr.div(text_length).ge(0.02)
 
 
 df = pd.read_csv(
@@ -31,24 +42,12 @@ print(f"full_text_clean literal 'nan'/'null': {clean_text.str.lower().isin(['nan
 print(f"kata_kunci kosong: {df['kata_kunci'].astype('string').fillna('').str.strip().eq('').sum():,}")
 print(f"created_at tidak valid: {pd.to_datetime(df['created_at'], errors='coerce').isna().sum():,}")
 
-if not os.path.exists("0_baris_dibuang_asing.csv"):
-    raise FileNotFoundError("0_baris_dibuang_asing.csv tidak ditemukan; pipeline dihentikan.")
-
-asing = pd.read_csv(
-    "0_baris_dibuang_asing.csv",
-    dtype={"doc_id": str},
-    keep_default_na=False,
-)
-asing_ids = asing["doc_id"]
-is_asing = df["doc_id"].isin(asing_ids)
-print(
-    f"ID pengecualian: {asing_ids.nunique():,} unik; "
-    f"{int(is_asing.sum()):,} baris cocok; "
-    f"{int((~asing_ids.isin(df['doc_id'])).sum()):,} ID tidak ditemukan"
-)
+is_asing = is_turkish_noise(df["full_text_raw"])
+print("Baris dibuang berdasarkan aturan teks, per sumber:")
+print(df.loc[is_asing, "sumber_data"].value_counts().to_string())
 before = len(df)
 df = df.loc[~is_asing].copy()
-report_rows("Hapus doc_id dalam berkas pengecualian", before, len(df))
+report_rows("Hapus teks yang memenuhi aturan asing", before, len(df))
 
 before = len(df)
 text = df["full_text_clean"].astype("string").fillna("").str.strip()

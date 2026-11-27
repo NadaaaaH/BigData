@@ -1,0 +1,84 @@
+"""
+Menyiapkan master_dataset_labeled.parquet untuk dashboard.
+
+Input (taruh satu folder dengan file ini):
+  - master_dataset_indobert_final.csv   (dari Anggota 1)
+  - 0_baris_dibuang_asing.csv           (dari Anggota 2, folder hasil_analisis_anggota2_pyspark)
+
+Aturan sama persis dengan notebook Anggota 2:
+  1. Buang baris dengan doc_id yang tercantum di 0_baris_dibuang_asing.csv
+  2. Buang teks bersih kosong
+  3. Pisahkan X menjadi X_Reply (teks diawali "@") dan X_Main
+  4. Label sentimen = kolom indobert_sentiment
+"""
+import os
+import pandas as pd
+
+
+def report_rows(step, before, after):
+    print(f"{step}: {before:,} -> {after:,} baris (dibuang {before - after:,})")
+
+
+df = pd.read_csv(
+    "master_dataset_indobert_final.csv",
+    dtype={"doc_id": str},
+    keep_default_na=False,
+)
+print(f"CSV utama dimuat: {len(df):,} baris")
+print(f"doc_id duplikat: {df['doc_id'].duplicated().sum():,}")
+clean_text = df["full_text_clean"].astype("string").fillna("").str.strip()
+print(f"full_text_clean literal 'nan'/'null': {clean_text.str.lower().isin(['nan', 'null']).sum():,}")
+print(f"kata_kunci kosong: {df['kata_kunci'].astype('string').fillna('').str.strip().eq('').sum():,}")
+print(f"created_at tidak valid: {pd.to_datetime(df['created_at'], errors='coerce').isna().sum():,}")
+
+if not os.path.exists("0_baris_dibuang_asing.csv"):
+    raise FileNotFoundError("0_baris_dibuang_asing.csv tidak ditemukan; pipeline dihentikan.")
+
+asing = pd.read_csv(
+    "0_baris_dibuang_asing.csv",
+    dtype={"doc_id": str},
+    keep_default_na=False,
+)
+asing_ids = asing["doc_id"]
+is_asing = df["doc_id"].isin(asing_ids)
+print(
+    f"ID pengecualian: {asing_ids.nunique():,} unik; "
+    f"{int(is_asing.sum()):,} baris cocok; "
+    f"{int((~asing_ids.isin(df['doc_id'])).sum()):,} ID tidak ditemukan"
+)
+before = len(df)
+df = df.loc[~is_asing].copy()
+report_rows("Hapus doc_id dalam berkas pengecualian", before, len(df))
+
+before = len(df)
+text = df["full_text_clean"].astype("string").fillna("").str.strip()
+has_text = text.ne("")
+df = df.loc[has_text].copy()
+report_rows("Hapus full_text_clean kosong", before, len(df))
+
+# Pisahkan X_Main / X_Reply
+is_x = df["sumber_data"] == "X"
+is_reply = is_x & df["full_text_raw"].astype(str).str.startswith("@")
+before = len(df)
+df.loc[is_reply, "sumber_data"] = "X_Reply"
+df.loc[is_x & ~is_reply, "sumber_data"] = "X_Main"
+report_rows("Klasifikasi sumber X (tidak menghapus baris)", before, len(df))
+
+before = len(df)
+df["sentiment"] = df["indobert_sentiment"]
+report_rows("Salin indobert_sentiment (tidak menghapus baris)", before, len(df))
+
+kolom = ["doc_id", "sumber_data", "kata_kunci", "created_at",
+         "full_text_clean", "sentiment", "indobert_confidence"]
+before = len(df)
+df = df[[k for k in kolom if k in df.columns]].copy()
+report_rows("Pilih kolom output (tidak menghapus baris)", before, len(df))
+for k in ["sumber_data", "kata_kunci", "sentiment"]:
+    df[k] = df[k].astype("category")
+
+print(f"Baris akhir: {len(df):,}")
+print(df["sumber_data"].value_counts())
+print(df["sentiment"].value_counts())
+
+df.to_parquet("master_dataset_labeled.parquet", index=False, compression="zstd")
+print("Ukuran file: %.1f MB" % (os.path.getsize("master_dataset_labeled.parquet") / 1e6))
